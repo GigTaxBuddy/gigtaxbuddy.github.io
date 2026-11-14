@@ -1,0 +1,3 @@
+Inter font (Inter-Regular, Inter-Bold, Inter-ExtraBold) by Rasmus Andersson.
+Licensed under the SIL Open Font License, Version 1.1. https://openfontlicense.org
+Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)

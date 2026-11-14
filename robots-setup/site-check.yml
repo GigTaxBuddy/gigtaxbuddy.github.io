@@ -1,0 +1,31 @@
+name: Site check (every 30 minutes)
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+concurrency: site-check
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install playwright==1.47.0 && python -m playwright install --with-deps chromium
+      - id: check
+        run: python promo/check_site.py https://gigtaxbuddy.github.io/ | tee site_check.json
+        continue-on-error: true
+      - name: Open an alert issue if broken, close it when fixed
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          gh label create site-problem --color D73A4A --force || true
+          OPEN=$(gh issue list --label site-problem --state open --json number --jq '.[0].number')
+          if [ "${{ steps.check.outcome }}" = "failure" ]; then
+            if [ -z "$OPEN" ]; then gh issue create --title "Website problem found" --label site-problem --body "$(cat site_check.json)"; fi
+          elif [ -n "$OPEN" ]; then
+            gh issue close "$OPEN" --comment "Fixed: the latest check passed."
+          fi

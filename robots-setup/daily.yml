@@ -1,0 +1,56 @@
+name: Daily video, posts and report
+on:
+  schedule:
+    - cron: '17 15 * * *'   # 8:17 AM Denver time (during daylight saving, 9:17)
+  workflow_dispatch:
+permissions:
+  contents: write
+  issues: write
+concurrency: daily
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: pip install pillow qrcode kokoro-onnx soundfile requests playwright==1.47.0 && python -m playwright install --with-deps chromium
+      - name: Get the voice model (cached)
+        uses: actions/cache@v4
+        with: { path: promo/tts, key: kokoro-v1.0-int8 }
+      - run: |
+          mkdir -p promo/tts
+          [ -f promo/tts/kokoro.onnx ] || curl -sSL -o promo/tts/kokoro.onnx https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx
+          [ -f promo/tts/voices.bin ] || curl -sSL -o promo/tts/voices.bin https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+      - name: Make today's video
+        id: make
+        run: echo "video=$(python promo/make_video.py $(TZ=America/Denver date +%F) --out media | tail -1)" >> "$GITHUB_OUTPUT"
+      - name: Publish the video file on the site (needed by Instagram and Facebook)
+        run: |
+          find media -name '*.mp4' -mtime +21 -delete; find media -name '*.json' -mtime +21 -delete
+          git config user.name "Gig Tax Buddy bot"; git config user.email "gigtaxbuddy@gmail.com"
+          git add media && git commit -m "Daily video $(date +%F)" && git push || echo "nothing new"
+          URL="https://gigtaxbuddy.github.io/media/$(basename '${{ steps.make.outputs.video }}')"
+          for i in $(seq 1 30); do [ "$(curl -s -o /dev/null -w '%{http_code}' "$URL")" = 200 ] && break; sleep 20; done
+      - name: Post to social media
+        env:
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          META_TOKEN: ${{ secrets.META_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          TT_CLIENT_KEY: ${{ secrets.TT_CLIENT_KEY }}
+          TT_CLIENT_SECRET: ${{ secrets.TT_CLIENT_SECRET }}
+          TT_REFRESH_TOKEN: ${{ secrets.TT_REFRESH_TOKEN }}
+        run: python promo/post.py "${{ steps.make.outputs.video }}"
+        continue-on-error: true
+      - run: python promo/check_site.py https://gigtaxbuddy.github.io/ > site_check.json
+        continue-on-error: true
+      - name: Daily report (arrives as a GitHub notification email)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GUMROAD_TOKEN: ${{ secrets.GUMROAD_TOKEN }}
+        run: python promo/report.py
